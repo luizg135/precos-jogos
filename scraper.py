@@ -31,10 +31,10 @@ def clean_price_to_float(price_str: str) -> float:
     if not isinstance(price_str, str):
         return float('inf') # Trata tipos não-string (ex: NaN do Excel) como preço alto
 
-    price_str = price_str.lower().strip()
-    if "gratuito" in price_str:
+    price_str_lower = price_str.lower().strip()
+    if "gratuito" in price_str_lower or "free" in price_str_lower or "grátis" in price_str_lower:
         return 0.0
-    if "não encontrado" in price_str or "preço indisponível" in price_str:
+    if "não encontrado" in price_str_lower or "preço indisponível" in price_str_lower:
         return float('inf') # Representa um preço desconhecido/indisponível para comparação
 
     # Remove "R$", substitui vírgula por ponto, e remove outros caracteres não numéricos/ponto
@@ -57,8 +57,8 @@ def format_float_to_price_str(price_float: float) -> str:
         return "0" # Mostra "0" para jogos gratuitos
     if price_float == float('inf'):
         return "Não encontrado" # Consistente com a mensagem de erro
-    # Formata como um número inteiro, sem o "R$", e adiciona uma aspa simples para forçar texto no Google Sheets
-    return f"'{int(price_float):,}".replace(",", "X").replace(".", ",").replace("X", "")
+    # Formata como um número inteiro, sem o "R$" e sem a aspa simples
+    return str(int(price_float)) # <--- MODIFICAÇÃO AQUI: Apenas o número inteiro como string
 
 def _clean_game_title(title: str) -> str:
     """
@@ -154,13 +154,23 @@ class SteamScraper:
         # Tenta encontrar o preço com desconto primeiro, depois o preço normal
         discount_price_element = best_match_element.select_one(".search_price.discounted, .discount_final_price")
         if discount_price_element:
-            price_text = discount_price_element.text.strip().split("R$")[-1].strip()
-            final_price_str = f"R$ {price_text}" if price_text else "Não encontrado"
+            price_text = discount_price_element.text.strip() # Pega o texto completo
+            if "gratuito" in price_text.lower() or "free" in price_text.lower() or "grátis" in price_text.lower():
+                final_price_str = "Gratuito" # Usa "Gratuito" para ser pego por clean_price_to_float
+            else:
+                price_text_value = price_text.split("R$")[-1].strip()
+                final_price_str = f"R$ {price_text_value}" if price_text_value else "Não encontrado"
         else:
             regular_price_element = best_match_element.select_one(".search_price")
             if regular_price_element:
-                price_text = regular_price_element.text.strip().split("R$")[-1].strip()
-                final_price_str = f"R$ {price_text}" if price_text else "Não encontrado"
+                price_text = regular_price_element.text.strip() # Pega o texto completo
+                if "gratuito" in price_text.lower() or "free" in price_text.lower() or "grátis" in price_text.lower():
+                    final_price_str = "Gratuito" # Usa "Gratuito" para ser pego por clean_price_to_float
+                else:
+                    price_text_value = price_text.split("R$")[-1].strip()
+                    final_price_str = f"R$ {price_text_value}" if price_text_value else "Não encontrado"
+            else:
+                final_price_str = "Não encontrado" # Se nenhum elemento de preço for encontrado
             
         return {
             "found": True,
@@ -274,7 +284,11 @@ class PsnScraper:
                                  soup.find('span', class_='psw-l-line-through') or \
                                  soup.find('span', class_='psw-h5')
             if temp_price_element:
-                price_str = temp_price_element.text.strip()
+                price_str_raw = temp_price_element.text.strip()
+                if "gratuito" in price_str_raw.lower() or "free" in price_str_raw.lower() or "grátis" in price_str_raw.lower():
+                    price_str = "Gratuito" # Usa "Gratuito" para ser pego por clean_price_to_float
+                else:
+                    price_str = price_str_raw
         else: # Se best_match_tile é um tile específico
             title_tag = best_match_tile.find('span', class_='psw-t-body') or best_match_tile.find('span', class_='psw-h5')
             if title_tag:
@@ -287,7 +301,11 @@ class PsnScraper:
             if not price_element:
                 price_element = best_match_tile.find('span', class_='psw-h5') # Outro seletor possível
             if price_element:
-                price_str = price_element.text.strip()
+                price_str_raw = price_element.text.strip()
+                if "gratuito" in price_str_raw.lower() or "free" in price_str_raw.lower() or "grátis" in price_str_raw.lower():
+                    price_str = "Gratuito" # Usa "Gratuito" para ser pego por clean_price_to_float
+                else:
+                    price_str = price_str_raw
         
         return {
             "found": True,
