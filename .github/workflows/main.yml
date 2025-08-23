@@ -19,10 +19,10 @@ jobs:
 
     - name: Instalar Dependências
       run: |
-        pip install requests beautifulsoup4 pandas openpyxl fuzzywuzzy python-levenshtein gspread
+        pip install -r requirements.txt # Irá instalar todas as libs, incluindo gspread e oauth2client
 
     - name: Executar Scraper
       env:
-        GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+        GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }} # <<-- MUDANÇA AQUI
         GSPREAD_SERVICE_ACCOUNT_CREDENTIALS: ${{ secrets.GSPREAD_SERVICE_ACCOUNT_CREDENTIALS }}
       run: python scraper.py # Substitua "seu_script_de_preco.py" pelo nome do seu arquivo Python
