@@ -99,7 +99,9 @@ class SteamScraper:
         e considerando os primeiros 5 resultados.
         """
         print(f"STEAM: Buscando por '{game_name}'...")
-        params = {'term': game_name, 'l': 'brazilian', 'cc': 'br'}
+        # --- MODIFICAÇÃO AQUI: Removido o parâmetro 'l' (idioma) para uma busca mais abrangente ---
+        params = {'term': game_name, 'cc': 'br'} # Mantém 'cc': 'br' para preço em BRL
+        # --- FIM DA MODIFICAÇÃO ---
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         # Cookies para contornar a verificação de idade (ainda mantidos, mas podem não ser 100% eficazes sem JS)
         cookies = {
