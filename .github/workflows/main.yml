@@ -19,10 +19,17 @@ jobs:
 
     - name: Instalar Dependências
       run: |
-        pip install -r requirements.txt # Irá instalar todas as libs, incluindo gspread e oauth2client
+        # Instala as dependências do Python
+        pip install -r requirements.txt
+        # Instala o Chrome e o ChromeDriver para Selenium
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver # Instala Chrome e o driver
+        # Garante que o chromedriver esteja no PATH
+        export PATH=$PATH:/usr/lib/chromium-browser/
+        echo "PATH=$PATH:/usr/lib/chromium-browser/" >> $GITHUB_ENV # Adiciona ao PATH para futuras etapas
 
     - name: Executar Scraper
       env:
-        GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }} # <<-- MUDANÇA AQUI
+        GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
         GSPREAD_SERVICE_ACCOUNT_CREDENTIALS: ${{ secrets.GSPREAD_SERVICE_ACCOUNT_CREDENTIALS }}
-      run: python scraper.py # Substitua "seu_script_de_preco.py" pelo nome do seu arquivo Python
+      run: python scraper.py # Substitua "scraper.py" pelo nome do seu arquivo Python, se for diferente
