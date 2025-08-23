@@ -385,6 +385,9 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
         print("DEBUG: Attempting gspread service account authentication...")
         gc = gspread.service_account(filename=credentials_file_path) # Retorna um objeto gspread.Client
         print(f"DEBUG: Type of 'gc' object: {type(gc)}")
+        # --- DEBUG: Imprime a versão do gspread instalada ---
+        print(f"DEBUG: gspread version: {gspread.__version__}")
+        # --- FIM DEBUG ---
         
         # Verifique se o atributo open_by_id existe antes de chamá-lo
         if not hasattr(gc, 'open_by_id'):
