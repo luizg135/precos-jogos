@@ -382,11 +382,19 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
         with open(credentials_file_path, "w") as f:
             f.write(credentials_json)
 
-        # Autenticar com o arquivo temporário
-        gc = gspread.service_account(filename=credentials_file_path)
+        print("DEBUG: Attempting gspread service account authentication...")
+        gc = gspread.service_account(filename=credentials_file_path) # Retorna um objeto gspread.Client
+        print(f"DEBUG: Type of 'gc' object: {type(gc)}")
+        
+        # Verifique se o atributo open_by_id existe antes de chamá-lo
+        if not hasattr(gc, 'open_by_id'):
+            raise AttributeError(f"gspread Client object (type: {type(gc)}) does not have 'open_by_id' method. "
+                                 "Please check gspread installation and version or review service account setup.")
         
         spreadsheet = gc.open_by_id(google_sheet_id)
+        print("DEBUG: Successfully opened spreadsheet by ID.")
         worksheet = spreadsheet.worksheet(worksheet_name)
+        print(f"DEBUG: Successfully selected worksheet '{worksheet_name}'.")
 
         # Lê todos os registros e cria um DataFrame
         # `get_all_records()` lê a primeira linha como cabeçalho
@@ -416,16 +424,14 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
         # Pega os cabeçalhos da planilha para encontrar os índices das colunas target
         gsheet_headers = worksheet.row_values(1)
         col_indices = {}
+        # Garante que todas as colunas de destino existam na planilha, adicionando se necessário.
         for col_name in target_gsheet_columns:
-            try:
-                col_indices[col_name] = gsheet_headers.index(col_name) + 1 # gspread é 1-based
-            except ValueError:
-                print(f"Atenção: A coluna '{col_name}' não foi encontrada na sua planilha do Google Sheets. Ela será adicionada ou tratada como nova.")
-                # Se a coluna não existe, a adicionamos ao final do cabeçalho para garantir que o `update` funcione
+            if col_name not in gsheet_headers:
+                print(f"Adicionando coluna '{col_name}' à planilha do Google Sheets.")
                 gsheet_headers.append(col_name)
+                # Atualiza apenas a célula do cabeçalho
                 worksheet.update_cell(1, len(gsheet_headers), col_name)
-                col_indices[col_name] = len(gsheet_headers)
-
+            col_indices[col_name] = gsheet_headers.index(col_name) + 1 # gspread é 1-based
 
         # Itera sobre cada jogo na planilha
         for index, row in df.iterrows():
@@ -487,7 +493,6 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
             updates.append(row_data)
 
         # Determina o range completo para a atualização
-        # Usamos os índices de coluna encontrados dinamicamente
         start_col_letter = gspread.utils.col_to_char(col_indices[target_gsheet_columns[0]])
         end_col_letter = gspread.utils.col_to_char(col_indices[target_gsheet_columns[-1]])
         end_row = start_row + len(df) - 1
