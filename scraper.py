@@ -8,6 +8,7 @@ import re # Para expressões regulares na limpeza de títulos
 import gspread # Importa gspread para interagir com Google Sheets
 import os # Para acessar variáveis de ambiente (secrets do GitHub Actions)
 import json # Para ler as credenciais JSON do service account
+from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
 
 # Você pode instalar python-levenshtein para melhor desempenho: pip install fuzzywuzzy python-levenshtein
 
@@ -356,7 +357,91 @@ class PsnScraper:
 
 # --- Lógica Principal do Script ---
 
-def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
+# Configuração da URL da planilha (usando a mesma variável de ambiente do seu API)
+# Esta classe de Config simula a leitura das variáveis de ambiente para o script
+# Assim, o script pode usar os mesmos nomes de variáveis que sua API.
+class PriceTrackerConfig:
+    GOOGLE_SHEETS_CREDENTIALS_JSON = os.environ.get('GSPREAD_SERVICE_ACCOUNT_CREDENTIALS') # Use o nome do secret do Price Tracker
+    if not GOOGLE_SHEETS_CREDENTIALS_JSON:
+        print("CRITICAL ERROR: 'GSPREAD_SERVICE_ACCOUNT_CREDENTIALS' environment variable is not set!")
+
+    # Usaremos GOOGLE_SHEET_URL para o método de acesso antigo
+    GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL') # Novo secret para o Price Tracker
+    if not GOOGLE_SHEET_URL:
+        print("CRITICAL ERROR: 'GOOGLE_SHEET_URL' environment variable is not set!")
+
+
+def _get_sheet_for_price_tracker(sheet_name):
+    """
+    Retorna o objeto da planilha (worksheet) para o Price Tracker, usando cache.
+    Autentica com as credenciais da conta de serviço lidas de uma variável de ambiente,
+    e abre a planilha pela URL, conforme o sistema da sua API.
+    """
+    if sheet_name in _sheet_cache:
+        return _sheet_cache[sheet_name]
+    
+    try:
+        credentials_json = PriceTrackerConfig.GOOGLE_SHEETS_CREDENTIALS_JSON
+        if not credentials_json:
+            print("CRITICAL ERROR (PriceTracker): GOOGLE_SHEETS_CREDENTIALS environment variable is not set in Config.")
+            return None
+        
+        google_sheet_url = PriceTrackerConfig.GOOGLE_SHEET_URL
+        if not google_sheet_url:
+            print("CRITICAL ERROR (PriceTracker): GOOGLE_SHEET_URL environment variable is not set in Config.")
+            return None
+
+        # Carregar as credenciais do JSON
+        creds_dict = json.loads(credentials_json)
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # Autorizar o cliente gspread com as credenciais
+        gc = gspread.authorize(creds)
+        
+        print("DEBUG (PriceTracker): Type of 'gc' object after authorize: ", type(gc))
+        print(f"DEBUG (PriceTracker): gspread version: {gspread.__version__}")
+
+        # Usar open_by_url para acessar a planilha
+        spreadsheet = gc.open_by_url(google_sheet_url)
+        worksheet = spreadsheet.worksheet(sheet_name)
+        _sheet_cache[sheet_name] = worksheet
+        
+        print(f"DEBUG (PriceTracker): Successfully opened spreadsheet by URL and worksheet '{sheet_name}'.")
+        return worksheet
+    except Exception as e:
+        print(f"Erro ao autenticar ou abrir planilha '{sheet_name}' no Price Tracker: {e}"); traceback.print_exc()
+        return None
+
+def _get_data_from_sheet_for_price_tracker(sheet_name):
+    """Retorna os dados da planilha para o Price Tracker, usando cache com TTL."""
+    current_time = datetime.now()
+    if sheet_name in _data_cache and \
+       (current_time - _last_cache_update.get(sheet_name, datetime.min)).total_seconds() < _cache_ttl_seconds:
+        print(f"Dados da planilha '{sheet_name}' servidos do cache no Price Tracker.")
+        return _data_cache[sheet_name]
+
+    sheet = _get_sheet_for_price_tracker(sheet_name)
+    if not sheet:
+        return []
+
+    try:
+        data = sheet.get_all_records()
+        _data_cache[sheet_name] = data
+        _last_cache_update[sheet_name] = current_time
+        print(f"Dados da planilha '{sheet_name}' atualizados do Google Sheets e armazenados em cache no Price Tracker.")
+        return data
+    except gspread.exceptions.APIError as e:
+        if "unable to parse range" in str(e): 
+            print(f"AVISO (PriceTracker): Planilha '{sheet_name}' vazia ou com erro de range, retornando lista vazia. Detalhes: {e}")
+            return []
+        print(f"Erro ao ler dados da planilha '{sheet_name}' no Price Tracker: {e}"); traceback.print_exc()
+        return []
+    except Exception as e:
+        print(f"Erro genérico ao ler dados da planilha '{sheet_name}' no Price Tracker: {e}"); traceback.print_exc()
+        return []
+
+def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
     """
     Função principal que orquestra a leitura da planilha do Google Sheets, o scraping e a atualização.
     """
@@ -365,43 +450,15 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
     current_date = datetime.now().strftime('%Y-%m-%d') # Data atual para registro
 
     try:
-        # Autenticação com Google Sheets usando credenciais de serviço
-        # As credenciais são lidas da variável de ambiente GOOGLE_APPLICATION_CREDENTIALS
-        # que deve ser configurada no GitHub Actions como um secret JSON.
-        # Precisamos criar um arquivo temporário com as credenciais.
-        
-        # Obter o JSON das credenciais da variável de ambiente
-        credentials_json = os.getenv('GSPREAD_SERVICE_ACCOUNT_CREDENTIALS')
-        if not credentials_json:
-            raise ValueError("A variável de ambiente 'GSPREAD_SERVICE_ACCOUNT_CREDENTIALS' não está definida.")
-        
-        # Salvar temporariamente as credenciais em um arquivo
-        # É uma boa prática limpar este arquivo após o uso, mas em GitHub Actions
-        # o ambiente é efêmero, então o arquivo será descartado automaticamente.
-        credentials_file_path = "service_account.json"
-        with open(credentials_file_path, "w") as f:
-            f.write(credentials_json)
+        # Define a variável de ambiente para a URL da planilha para a classe PriceTrackerConfig
+        os.environ['GOOGLE_SHEET_URL'] = google_sheet_url
 
-        print("DEBUG: Attempting gspread service account authentication...")
-        gc = gspread.service_account(filename=credentials_file_path) # Retorna um objeto gspread.Client
-        print(f"DEBUG: Type of 'gc' object: {type(gc)}")
-        # --- DEBUG: Imprime a versão do gspread instalada ---
-        print(f"DEBUG: gspread version: {gspread.__version__}")
-        # --- FIM DEBUG ---
-        
-        # Verifique se o atributo open_by_id existe antes de chamá-lo
-        if not hasattr(gc, 'open_by_id'):
-            raise AttributeError(f"gspread Client object (type: {type(gc)}) does not have 'open_by_id' method. "
-                                 "Please check gspread installation and version or review service account setup.")
-        
-        spreadsheet = gc.open_by_id(google_sheet_id)
-        print("DEBUG: Successfully opened spreadsheet by ID.")
-        worksheet = spreadsheet.worksheet(worksheet_name)
-        print(f"DEBUG: Successfully selected worksheet '{worksheet_name}'.")
+        # Lê os dados da planilha
+        data = _get_data_from_sheet_for_price_tracker(worksheet_name)
+        if not data:
+            print(f"ERRO: Não foi possível carregar dados da planilha '{worksheet_name}'. Verifique o ID/URL da planilha e permissões.")
+            return
 
-        # Lê todos os registros e cria um DataFrame
-        # `get_all_records()` lê a primeira linha como cabeçalho
-        data = worksheet.get_all_records()
         df = pd.DataFrame(data)
 
         if 'Nome' not in df.columns:
@@ -410,7 +467,6 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
             return
 
         # Define as colunas que serão preenchidas no Google Sheets
-        # Mapeia os nomes das colunas do DataFrame para as colunas do Google Sheets
         target_gsheet_columns = [
             'Steam Preco Atual',
             'Steam Menor Preco Historico',
@@ -425,7 +481,13 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
                 df[col] = 'Preço indisponível' # Valor padrão para novas colunas
 
         # Pega os cabeçalhos da planilha para encontrar os índices das colunas target
-        gsheet_headers = worksheet.row_values(1)
+        # Usamos _get_sheet_for_price_tracker aqui para garantir que estamos usando o método de acesso correto
+        gsheet_worksheet = _get_sheet_for_price_tracker(worksheet_name)
+        if not gsheet_worksheet:
+            print(f"ERRO: Não foi possível obter o objeto da planilha para {worksheet_name}.")
+            return
+
+        gsheet_headers = gsheet_worksheet.row_values(1)
         col_indices = {}
         # Garante que todas as colunas de destino existam na planilha, adicionando se necessário.
         for col_name in target_gsheet_columns:
@@ -433,7 +495,7 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
                 print(f"Adicionando coluna '{col_name}' à planilha do Google Sheets.")
                 gsheet_headers.append(col_name)
                 # Atualiza apenas a célula do cabeçalho
-                worksheet.update_cell(1, len(gsheet_headers), col_name)
+                gsheet_worksheet.update_cell(1, len(gsheet_headers), col_name)
             col_indices[col_name] = gsheet_headers.index(col_name) + 1 # gspread é 1-based
 
         # Itera sobre cada jogo na planilha
@@ -503,7 +565,7 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
         range_to_update = f"{start_col_letter}{start_row}:{end_col_letter}{end_row}"
         
         print(f"\nAtualizando Google Sheet no range: {range_to_update}")
-        worksheet.update(range_to_update, updates)
+        gsheet_worksheet.update(range_to_update, updates)
 
 
         print(f"\nPlanilha do Google Sheets '{worksheet_name}' atualizada com sucesso!")
@@ -515,13 +577,13 @@ def run_scraper(google_sheet_id: str, worksheet_name: str = 'Desejos'):
 
 # --- Executa o Scraper ---
 if __name__ == "__main__":
-    # Estas variáveis devem ser definidas como secrets no GitHub Actions
-    # ou passadas como argumentos se você executar localmente com credenciais.
-    GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
+    # A URL da planilha deve ser passada como uma variável de ambiente no GitHub Actions.
+    # Usaremos GOOGLE_SHEET_URL para o Price Tracker, que será configurado no GitHub Actions.
+    GOOGLE_SHEET_URL = os.getenv('GOOGLE_SHEET_URL')
 
-    if not GOOGLE_SHEET_ID:
-        print("Erro: A variável de ambiente 'GOOGLE_SHEET_ID' não está definida.")
-        print("Por favor, defina GOOGLE_SHEET_ID nas secrets do GitHub Actions.")
+    if not GOOGLE_SHEET_URL:
+        print("Erro: A variável de ambiente 'GOOGLE_SHEET_URL' não está definida.")
+        print("Por favor, defina GOOGLE_SHEET_URL nas secrets do GitHub Actions.")
         exit(1)
 
-    run_scraper(google_sheet_id=GOOGLE_SHEET_ID, worksheet_name='Desejos')
+    run_scraper(google_sheet_url=GOOGLE_SHEET_URL, worksheet_name='Desejos')
