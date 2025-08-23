@@ -11,6 +11,7 @@ import json # Para ler as credenciais JSON do service account
 from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
 import traceback # Importa o módulo traceback para depuração de erros
 import math # Importa math para ceil
+import pytz
 
 # Removidos imports do Selenium para deixar a aplicação mais leve
 
@@ -450,8 +451,9 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
     """
     steam_scraper = SteamScraper()
     psn_scraper = PsnScraper()
-    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Data atual para registro
-
+    brasilia_tz = pytz.timezone('America/Sao_Paulo')
+    current_date = datetime.now(brasilia_tz).strftime('%Y-%m-%d %H:%M:%S')
+    
     try:
         # Define a variável de ambiente para a URL da planilha para a classe PriceTrackerConfig
         os.environ['GOOGLE_SHEET_URL'] = google_sheet_url
