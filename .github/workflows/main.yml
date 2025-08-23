@@ -17,12 +17,6 @@ jobs:
       with:
         python-version: '3.9' # Ou a versão que você preferir
 
-    # NOVO PASSO: Instalar Google Chrome e ChromeDriver de forma robusta
-    - name: Instalar Google Chrome e ChromeDriver
-      uses: browser-actions/setup-chrome@v1.6.0 # Use esta ação para instalar Chrome e ChromeDriver
-      with:
-        chrome-version: 'stable' # Instala a versão estável mais recente do Chrome
-
     - name: Instalar Dependências Python
       run: |
         pip install -r requirements.txt
