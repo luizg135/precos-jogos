@@ -17,19 +17,18 @@ jobs:
       with:
         python-version: '3.9' # Ou a versão que você preferir
 
-    - name: Instalar Dependências
+    # NOVO PASSO: Instalar Google Chrome e ChromeDriver de forma robusta
+    - name: Instalar Google Chrome e ChromeDriver
+      uses: browser-actions/setup-chrome@v1.6.0 # Use esta ação para instalar Chrome e ChromeDriver
+      with:
+        chrome-version: 'stable' # Instala a versão estável mais recente do Chrome
+
+    - name: Instalar Dependências Python
       run: |
-        # Instala as dependências do Python
         pip install -r requirements.txt
-        # Instala o Chrome e o ChromeDriver para Selenium
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver # Instala Chrome e o driver
-        # Garante que o chromedriver esteja no PATH
-        export PATH=$PATH:/usr/lib/chromium-browser/
-        echo "PATH=$PATH:/usr/lib/chromium-browser/" >> $GITHUB_ENV # Adiciona ao PATH para futuras etapas
 
     - name: Executar Scraper
       env:
         GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
         GSPREAD_SERVICE_ACCOUNT_CREDENTIALS: ${{ secrets.GSPREAD_SERVICE_ACCOUNT_CREDENTIALS }}
-      run: python scraper.py # Substitua "scraper.py" pelo nome do seu arquivo Python, se for diferente
+      run: python scraper.py # Substitua "scraper.py" pelo nome do seu arquivo Python
