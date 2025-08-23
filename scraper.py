@@ -357,6 +357,12 @@ class PsnScraper:
 
 # --- Lógica Principal do Script ---
 
+# Cache global para planilhas e dados (MOVIDO PARA CIMA PARA GARANTIR DEFINIÇÃO GLOBAL)
+_sheet_cache = {}
+_data_cache = {}
+_cache_ttl_seconds = 300 # Tempo de vida do cache em segundos (5 minutos)
+_last_cache_update = {}
+
 # Configuração da URL da planilha (usando a mesma variável de ambiente do seu API)
 # Esta classe de Config simula a leitura das variáveis de ambiente para o script
 # Assim, o script pode usar os mesmos nomes de variáveis que sua API.
@@ -377,6 +383,7 @@ def _get_sheet_for_price_tracker(sheet_name):
     Autentica com as credenciais da conta de serviço lidas de uma variável de ambiente,
     e abre a planilha pela URL, conforme o sistema da sua API.
     """
+    global _sheet_cache # Declarar como global
     if sheet_name in _sheet_cache:
         return _sheet_cache[sheet_name]
     
@@ -415,6 +422,7 @@ def _get_sheet_for_price_tracker(sheet_name):
 
 def _get_data_from_sheet_for_price_tracker(sheet_name):
     """Retorna os dados da planilha para o Price Tracker, usando cache com TTL."""
+    global _data_cache, _last_cache_update # Declarar como global
     current_time = datetime.now()
     if sheet_name in _data_cache and \
        (current_time - _last_cache_update.get(sheet_name, datetime.min)).total_seconds() < _cache_ttl_seconds:
@@ -440,6 +448,14 @@ def _get_data_from_sheet_for_price_tracker(sheet_name):
     except Exception as e:
         print(f"Erro genérico ao ler dados da planilha '{sheet_name}' no Price Tracker: {e}"); traceback.print_exc()
         return []
+
+def _invalidate_cache(sheet_name):
+    """Invalida o cache para uma planilha específica."""
+    global _data_cache # Declarar como global
+    if sheet_name in _data_cache:
+        del _data_cache[sheet_name]
+        print(f"Cache para a planilha '{sheet_name}' invalidado.")
+
 
 def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
     """
