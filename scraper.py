@@ -11,6 +11,15 @@ import json # Para ler as credenciais JSON do service account
 from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
 import traceback # Importa o módulo traceback para depuração de erros
 
+# Selenium imports
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+
 # Você pode instalar python-levenshtein para melhor desempenho: pip install fuzzywuzzy python-levenshtein
 
 # --- Configuração Global ---
@@ -85,42 +94,102 @@ def _clean_game_title(title: str) -> str:
 
 class SteamScraper:
     """
-    Scraper para buscar informações de jogos e preços na Steam.
+    Scraper para buscar informações de jogos e preços na Steam usando Selenium.
     """
     BASE_URL = "https://store.steampowered.com/search/"
+    
+    def __init__(self):
+        # Configurações do Chrome para rodar em modo headless no GitHub Actions
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080") # Tamanho da janela para evitar layouts mobile
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--start-maximized")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--proxy-server='direct://'")
+        chrome_options.add_argument("--proxy-bypass-list=*")
+        chrome_options.add_argument("--blink-settings=imagesEnabled=false") # Desabilita imagens para velocidade
+        
+        # O ChromeDriver será encontrado no PATH do sistema no GitHub Actions
+        # ou você pode especificar o caminho se estiver rodando localmente
+        try:
+            self.driver = webdriver.Chrome(service=Service(), options=chrome_options)
+            print("DEBUG: Selenium WebDriver inicializado com sucesso.")
+        except WebDriverException as e:
+            print(f"ERRO: Falha ao inicializar o Selenium WebDriver: {e}")
+            print("Certifique-se de que o ChromeDriver está instalado e no PATH, e que o Chrome está disponível.")
+            self.driver = None # Define como None para indicar falha na inicialização
+
+    def __del__(self):
+        if self.driver:
+            self.driver.quit()
+            print("DEBUG: Selenium WebDriver encerrado.")
+
+    def _handle_age_gate(self):
+        """
+        Tenta passar pela tela de verificação de idade da Steam.
+        """
+        try:
+            # Espera até que o formulário de idade esteja presente
+            WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.ID, "agegate_box"))
+            )
+            print("DEBUG: Tela de verificação de idade detectada.")
+
+            # Seleciona um ano de nascimento bem antigo (ex: 1950)
+            self.driver.find_element(By.ID, "ageYear").send_keys("1950")
+            
+            # Clica no botão "View Page" ou "Enter"
+            # Pode haver diferentes seletores para o botão, tentamos os mais comuns
+            try:
+                self.driver.find_element(By.ID, "view_product_page_btn").click()
+            except:
+                self.driver.find_element(By.CSS_SELECTOR, "a.btn_medium.btn_green_steamui").click()
+            
+            print("DEBUG: Verificação de idade submetida.")
+            # Espera um pouco para a página carregar após a submissão
+            time.sleep(2) 
+        except TimeoutException:
+            print("DEBUG: Nenhuma tela de verificação de idade detectada ou não apareceu a tempo.")
+        except Exception as e:
+            print(f"AVISO: Erro ao tentar passar pela verificação de idade: {e}")
 
     def search_game_price(self, game_name: str) -> dict:
         """
-        Busca o preço de um jogo específico na Steam, usando correspondência fuzzy
-        e considerando os primeiros 5 resultados. Inclui um fallback para páginas individuais.
+        Busca o preço de um jogo específico na Steam usando Selenium.
         """
-        print(f"STEAM: Buscando por '{game_name}'...")
-        params = {'term': game_name, 'l': 'brazilian', 'cc': 'br'}
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        if not self.driver:
+            return self._format_error("Selenium WebDriver não inicializado.")
+
+        print(f"STEAM: Buscando por '{game_name}' com Selenium...")
+        search_url = f"{self.BASE_URL}?term={game_name}&l=brazilian&cc=br"
         
-        # Cookies mais abrangentes para contornar a verificação de idade
-        cookies = {
-            'birthtime': '86400',  # 1 de Janeiro de 1970 em Unix timestamp
-            'wants_mature_content': '1',
-            'mature_content': '1'
-        }
-
-        best_match_element_from_search = None
-        highest_score_from_search = 0
-
         try:
-            response = requests.get(self.BASE_URL, params=params, headers=headers, cookies=cookies, timeout=15)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            print(f"ERRO STEAM: Falha de comunicação na busca para '{game_name}': {e}")
-            return self._format_error("Falha de comunicação.")
+            self.driver.get(search_url)
+            self._handle_age_gate() # Tenta passar pela verificação de idade
+            
+            # Espera até que os resultados da busca ou um erro de jogo não encontrado apareçam
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#search_resultsRows a, .search_results_error"))
+            )
+            
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            search_results = soup.select("#search_resultsRows a")[:5]
 
-        soup_search_results = BeautifulSoup(response.text, 'html.parser')
-        search_results = soup_search_results.select("#search_resultsRows a")[:5]
+            best_match_element = None
+            highest_score = 0
+            
+            if not search_results:
+                # Verifica se há uma mensagem de erro de jogo não encontrado
+                error_message_element = soup.select_one(".search_results_error")
+                if error_message_element and "No results were found for your search" in error_message_element.text:
+                    return self._format_error("Jogo não encontrado.")
+                return self._format_error("Nenhum resultado de busca visível ou estrutura da página mudou.")
 
-        cleaned_game_name = _clean_game_title(game_name)
+            cleaned_game_name = _clean_game_title(game_name)
 
-        if search_results:
             for result_element in search_results:
                 title_element = result_element.select_one("span.title")
                 if title_element:
@@ -128,21 +197,24 @@ class SteamScraper:
                     cleaned_result_title = _clean_game_title(result_title)
                     score = fuzz.ratio(cleaned_game_name, cleaned_result_title)
                     
-                    if score > highest_score_from_search:
-                        highest_score_from_search = score
-                        best_match_element_from_search = result_element
-        
-        # Se encontrou um bom match acima do limiar na página de busca, retorna.
-        if best_match_element_from_search and highest_score_from_search >= SIMILARITY_THRESHOLD:
-            title = best_match_element_from_search.select_one("span.title").text.strip()
-            game_url = best_match_element_from_search['href']
+                    if score > highest_score:
+                        highest_score = score
+                        best_match_element = result_element
+            
+            if not best_match_element or highest_score < SIMILARITY_THRESHOLD:
+                return self._format_error(f"Jogo não encontrado ou semelhança muito baixa ({highest_score}%).")
+
+            title = best_match_element.select_one("span.title").text.strip()
+            game_url = best_match_element['href']
             final_price_str = "Preço indisponível"
-            discount_price_element = best_match_element_from_search.select_one(".search_price.discounted, .discount_final_price")
+            
+            # Tenta encontrar o preço (pode ser mais complexo com Selenium, mas BeautifulSoup ainda é bom para o HTML final)
+            discount_price_element = best_match_element.select_one(".search_price.discounted, .discount_final_price")
             if discount_price_element:
                 price_text = discount_price_element.text.strip().split("R$")[-1].strip()
                 final_price_str = f"R$ {price_text}" if price_text else "Preço indisponível"
             else:
-                regular_price_element = best_match_element_from_search.select_one(".search_price")
+                regular_price_element = best_match_element.select_one(".search_price")
                 if regular_price_element:
                     price_text = regular_price_element.text.strip().split("R$")[-1].strip()
                     final_price_str = f"R$ {price_text}" if price_text else "Preço indisponível"
@@ -153,67 +225,15 @@ class SteamScraper:
                 "price_str": final_price_str,
                 "price_float": clean_price_to_float(final_price_str),
                 "url": game_url,
-                "similarity_score": highest_score_from_search
+                "similarity_score": highest_score
             }
         
-        # --- FALLBACK: Se a busca inicial falhou ou foi censurada, tentar acessar o primeiro link diretamente ---
-        print(f"  STEAM: Busca inicial falhou ou semelhança baixa ({highest_score_from_search}%). Tentando fallback para o primeiro link...")
-        
-        first_possible_link = soup_search_results.select_one("#search_resultsRows a")
-        if first_possible_link and 'href' in first_possible_link.attrs:
-            game_page_url = first_possible_link['href']
-            
-            # --- DEBUG: Imprime a URL do fallback e o status da requisição ---
-            print(f"  STEAM DEBUG: URL do fallback: {game_page_url}")
-            try:
-                response_game_page = requests.get(game_page_url, headers=headers, cookies=cookies, timeout=15)
-                print(f"  STEAM DEBUG: Status da requisição da página do jogo: {response_game_page.status_code}")
-                response_game_page.raise_for_status()
-            except requests.RequestException as e:
-                print(f"  ERRO STEAM: Falha de comunicação na página do jogo '{game_name}' ({game_page_url}): {e}")
-                return self._format_error("Falha de comunicação no fallback.")
-
-            soup_game_page = BeautifulSoup(response_game_page.text, 'html.parser')
-            # --- DEBUG: Imprime um trecho do HTML da página do jogo ---
-            print(f"  STEAM DEBUG: Snippet do HTML da página do jogo (primeiros 500 caracteres):")
-            print(response_game_page.text[:500])
-            # --- FIM DEBUG ---
-
-
-            # Tenta extrair título e preço da página do jogo
-            # Seletores comuns para título e preço em uma página de jogo Steam
-            game_page_title_element = soup_game_page.select_one("div.apphub_AppName, div.game_title_area h1, #appHubAppName")
-            game_page_price_element = soup_game_page.select_one(".game_purchase_price, .discount_block .discount_final_price, .price_discount .discount_final_price")
-
-            fallback_title = "Título indisponível"
-            fallback_price_str = "Preço indisponível"
-            fallback_score = 0
-
-            if game_page_title_element:
-                fallback_title = game_page_title_element.text.strip()
-                cleaned_fallback_title = _clean_game_title(fallback_title)
-                fallback_score = fuzz.ratio(cleaned_game_name, cleaned_fallback_title)
-
-            if game_page_price_element:
-                price_text = game_page_price_element.text.strip().split("R$")[-1].strip()
-                fallback_price_str = f"R$ {price_text}" if price_text else "Preço indisponível"
-            
-            # Se o fallback encontrou um título e a similaridade é aceitável, retorna
-            if fallback_title != "Título indisponível" and fallback_score >= SIMILARITY_THRESHOLD:
-                print(f"  STEAM: Fallback bem-sucedido para '{fallback_title}' (Semelhança: {fallback_score}%).")
-                return {
-                    "found": True,
-                    "title": fallback_title,
-                    "price_str": fallback_price_str,
-                    "price_float": clean_price_to_float(fallback_price_str),
-                    "url": game_page_url,
-                    "similarity_score": fallback_score
-                }
-            else:
-                 print(f"  STEAM: Fallback falhou para '{game_name}'. Título do jogo: '{fallback_title}', Semelhança: {fallback_score}%.")
-                 return self._format_error(f"Jogo não encontrado ou semelhança muito baixa ({highest_score_from_search}% na busca e {fallback_score}% no fallback).")
-
-        return self._format_error(f"Jogo não encontrado ou semelhança muito baixa ({highest_score_from_search}%).")
+        except TimeoutException:
+            print(f"ERRO STEAM: Tempo limite excedido ao carregar a página de busca para '{game_name}'.")
+            return self._format_error("Tempo limite excedido na busca.")
+        except Exception as e:
+            print(f"ERRO INESPERADO STEAM com Selenium para '{game_name}': {e}"); traceback.print_exc()
+            return self._format_error("Erro inesperado com Selenium.")
 
 
     def _format_error(self, message: str) -> dict:
