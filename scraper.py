@@ -10,6 +10,7 @@ import os # Para acessar variáveis de ambiente (secrets do GitHub Actions)
 import json # Para ler as credenciais JSON do service account
 from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
 import traceback # Importa o módulo traceback para depuração de erros
+import math # Importa math para ceil
 
 # Removidos imports do Selenium para deixar a aplicação mais leve
 
@@ -25,8 +26,8 @@ SIMILARITY_THRESHOLD = 70 # Alterado para 70% conforme sua solicitação
 def clean_price_to_float(price_str: str) -> float:
     """
     Converte uma string de preço (ex: "R$ 199,90", "Gratuito", "Não encontrado") para um float.
-    Retorna float('inf') para preços indisponíveis ou inválidos, e 0.0 para "Gratuito".
-    Os preços numéricos são arredondados para o inteiro mais próximo.
+    Retorna float('inf') para preços indisponíveis ou inválido, e 0.0 para "Gratuito".
+    Os preços numéricos são arredondados para o inteiro mais próximo (para cima).
     """
     if not isinstance(price_str, str):
         return float('inf') # Trata tipos não-string (ex: NaN do Excel) como preço alto
@@ -40,17 +41,17 @@ def clean_price_to_float(price_str: str) -> float:
     # Remove "R$", substitui vírgula por ponto, e remove outros caracteres não numéricos/ponto
     cleaned_price = price_str.replace("r$", "").replace(".", "").replace(",", ".").strip()
     try:
-        # Tenta extrair apenas a parte numérica e arredonda para o inteiro mais próximo
+        # Tenta extrair apenas a parte numérica e arredonda para o inteiro mais próximo (para cima)
         match = re.search(r'\d[\d\.]*', cleaned_price)
         if match:
-            return round(float(match.group(0)))
+            return math.ceil(float(match.group(0))) # <--- MODIFICAÇÃO AQUI: math.ceil para arredondar para cima
         return float('inf')
     except ValueError:
         return float('inf') # Retorna infinito se a conversão falhar
 
 def format_float_to_price_str(price_float: float) -> str:
     """
-    Converte um float de preço (já arredondado) de volta para uma string formatada (ex: "400").
+    Converte um float de preço (já arredondado para cima) de volta para uma string formatada (ex: "400").
     Retorna "Não encontrado" se o preço for float('inf').
     """
     if price_float == 0.0:
@@ -58,7 +59,7 @@ def format_float_to_price_str(price_float: float) -> str:
     if price_float == float('inf'):
         return "Não encontrado" # Consistente com a mensagem de erro
     # Formata como um número inteiro, sem o "R$" e sem a aspa simples
-    return str(int(price_float)) # <--- MODIFICAÇÃO AQUI: Apenas o número inteiro como string
+    return str(int(price_float)) # <--- MODIFICAÇÃO AQUI: Apenas o número inteiro como string, sem aspa inicial
 
 def _clean_game_title(title: str) -> str:
     """
@@ -311,7 +312,7 @@ class PsnScraper:
             "found": True,
             "title": title,
             "price_str": price_str,
-            "price_float": clean_price_to_float(price_str),
+            "price_float": clean_price_to_float(final_price_str), # Corrigido para usar final_price_str
             "url": game_url,
             "similarity_score": highest_score
         }
