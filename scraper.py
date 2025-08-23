@@ -54,11 +54,11 @@ def format_float_to_price_str(price_float: float) -> str:
     Retorna "Não encontrado" se o preço for float('inf').
     """
     if price_float == 0.0:
-        return "0" # Alterado para mostrar "0" para jogos gratuitos
+        return "0" # Mostra "0" para jogos gratuitos
     if price_float == float('inf'):
         return "Não encontrado" # Consistente com a mensagem de erro
-    # Formata como um número inteiro, sem o "R$"
-    return f"{int(price_float):,}".replace(",", "X").replace(".", ",").replace("X", ".")
+    # Formata como um número inteiro, sem o "R$", e adiciona uma aspa simples para forçar texto no Google Sheets
+    return f"'{int(price_float):,}".replace(",", "X").replace(".", ",").replace("X", ".") # <--- MODIFICAÇÃO AQUI
 
 def _clean_game_title(title: str) -> str:
     """
