@@ -450,7 +450,7 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
     """
     steam_scraper = SteamScraper()
     psn_scraper = PsnScraper()
-    current_date = datetime.now().strftime('%Y-%m-%d') # Data atual para registro
+    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Data atual para registro
 
     try:
         # Define a variável de ambiente para a URL da planilha para a classe PriceTrackerConfig
