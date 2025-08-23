@@ -11,14 +11,7 @@ import json # Para ler as credenciais JSON do service account
 from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
 import traceback # Importa o módulo traceback para depuração de erros
 
-# Selenium imports
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+# Removidos imports do Selenium para deixar a aplicação mais leve
 
 # Você pode instalar python-levenshtein para melhor desempenho: pip install fuzzywuzzy python-levenshtein
 
@@ -31,8 +24,9 @@ SIMILARITY_THRESHOLD = 70 # Alterado para 70% conforme sua solicitação
 
 def clean_price_to_float(price_str: str) -> float:
     """
-    Converte uma string de preço (ex: "R$ 199,90", "Gratuito", "Preço indisponível") para um float.
+    Converte uma string de preço (ex: "R$ 199,90", "Gratuito", "Não encontrado") para um float.
     Retorna float('inf') para preços indisponíveis ou inválidos, e 0.0 para "Gratuito".
+    Os preços numéricos são arredondados para o inteiro mais próximo.
     """
     if not isinstance(price_str, str):
         return float('inf') # Trata tipos não-string (ex: NaN do Excel) como preço alto
@@ -40,30 +34,31 @@ def clean_price_to_float(price_str: str) -> float:
     price_str = price_str.lower().strip()
     if "gratuito" in price_str:
         return 0.0
-    if "preço indisponível" in price_str or "não encontrado" in price_str:
+    if "não encontrado" in price_str or "preço indisponível" in price_str:
         return float('inf') # Representa um preço desconhecido/indisponível para comparação
 
     # Remove "R$", substitui vírgula por ponto, e remove outros caracteres não numéricos/ponto
     cleaned_price = price_str.replace("r$", "").replace(".", "").replace(",", ".").strip()
     try:
-        # Tenta extrair apenas a parte numérica
+        # Tenta extrair apenas a parte numérica e arredonda para o inteiro mais próximo
         match = re.search(r'\d[\d\.]*', cleaned_price)
         if match:
-            return float(match.group(0))
+            return round(float(match.group(0)))
         return float('inf')
     except ValueError:
         return float('inf') # Retorna infinito se a conversão falhar
 
 def format_float_to_price_str(price_float: float) -> str:
     """
-    Converte um float de preço de volta para uma string formatada (ex: "R$ 199,90").
+    Converte um float de preço (já arredondado) de volta para uma string formatada (ex: "R$ 400").
+    Retorna "Não encontrado" se o preço for float('inf').
     """
     if price_float == 0.0:
         return "Gratuito"
     if price_float == float('inf'):
-        return "Preço indisponível"
-    # Formata para Real Brasileiro
-    return f"R$ {price_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return "Não encontrado" # Consistente com a mensagem de erro
+    # Formata para Real Brasileiro, como um número inteiro
+    return f"R$ {int(price_float):,}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def _clean_game_title(title: str) -> str:
     """
@@ -94,157 +89,96 @@ def _clean_game_title(title: str) -> str:
 
 class SteamScraper:
     """
-    Scraper para buscar informações de jogos e preços na Steam usando Selenium.
+    Scraper para buscar informações de jogos e preços na Steam usando requests e BeautifulSoup.
     """
     BASE_URL = "https://store.steampowered.com/search/"
-    
-    def __init__(self):
-        # Configurações do Chrome para rodar em modo headless no GitHub Actions
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--window-size=1920,1080") # Tamanho da janela para evitar layouts mobile
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--proxy-server='direct://'")
-        chrome_options.add_argument("--proxy-bypass-list=*")
-        chrome_options.add_argument("--blink-settings=imagesEnabled=false") # Desabilita imagens para velocidade
-        
-        # O ChromeDriver será encontrado no PATH do sistema no GitHub Actions
-        # ou você pode especificar o caminho se estiver rodando localmente
-        try:
-            # Não precisamos especificar o caminho do chromedriver se ele estiver no PATH (configurado pelo workflow)
-            self.driver = webdriver.Chrome(service=Service(), options=chrome_options)
-            print("DEBUG: Selenium WebDriver inicializado com sucesso.")
-        except WebDriverException as e:
-            print(f"ERRO: Falha ao inicializar o Selenium WebDriver: {e}")
-            print("Certifique-se de que o ChromeDriver está instalado e no PATH, e que o Chrome está disponível.")
-            self.driver = None # Define como None para indicar falha na inicialização
-
-    def __del__(self):
-        if self.driver:
-            self.driver.quit()
-            print("DEBUG: Selenium WebDriver encerrado.")
-
-    def _handle_age_gate(self):
-        """
-        Tenta passar pela tela de verificação de idade da Steam.
-        """
-        try:
-            # Espera até que o formulário de idade esteja presente
-            WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.ID, "agegate_box"))
-            )
-            print("DEBUG: Tela de verificação de idade detectada.")
-
-            # Seleciona um ano de nascimento bem antigo (ex: 1950)
-            self.driver.find_element(By.ID, "ageYear").send_keys("1950")
-            
-            # Clica no botão "View Page" ou "Enter"
-            # Pode haver diferentes seletores para o botão, tentamos os mais comuns
-            try:
-                self.driver.find_element(By.ID, "view_product_page_btn").click()
-            except:
-                self.driver.find_element(By.CSS_SELECTOR, "a.btn_medium.btn_green_steamui").click()
-            
-            print("DEBUG: Verificação de idade submetida.")
-            # Espera um pouco para a página carregar após a submissão
-            time.sleep(2) 
-        except TimeoutException:
-            print("DEBUG: Nenhuma tela de verificação de idade detectada ou não apareceu a tempo.")
-        except Exception as e:
-            print(f"AVISO: Erro ao tentar passar pela verificação de idade: {e}")
 
     def search_game_price(self, game_name: str) -> dict:
         """
-        Busca o preço de um jogo específico na Steam usando Selenium.
+        Busca o preço de um jogo específico na Steam, usando correspondência fuzzy
+        e considerando os primeiros 5 resultados.
         """
-        if not self.driver:
-            return self._format_error("Selenium WebDriver não inicializado.")
+        print(f"STEAM: Buscando por '{game_name}'...")
+        params = {'term': game_name, 'l': 'brazilian', 'cc': 'br'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        # Cookies para contornar a verificação de idade (ainda mantidos, mas podem não ser 100% eficazes sem JS)
+        cookies = {
+            'birthtime': '86400',  # 1 de Janeiro de 1970 em Unix timestamp
+            'wants_mature_content': '1',
+            'mature_content': '1'
+        }
 
-        print(f"STEAM: Buscando por '{game_name}' com Selenium...")
-        search_url = f"{self.BASE_URL}?term={game_name}&l=brazilian&cc=br"
-        
         try:
-            self.driver.get(search_url)
-            self._handle_age_gate() # Tenta passar pela verificação de idade
-            
-            # Espera até que os resultados da busca ou um erro de jogo não encontrado apareçam
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#search_resultsRows a, .search_results_error"))
-            )
-            
-            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-            search_results = soup.select("#search_resultsRows a")[:5]
+            response = requests.get(self.BASE_URL, params=params, headers=headers, cookies=cookies, timeout=15)
+            response.raise_for_status() # Lança um erro para status de resposta HTTP ruins
+        except requests.RequestException as e:
+            print(f"ERRO STEAM: Falha de comunicação para '{game_name}': {e}")
+            return self._format_error("Não encontrado.") # Mensagem de erro padrão
 
-            best_match_element = None
-            highest_score = 0
-            
-            if not search_results:
-                # Verifica se há uma mensagem de erro de jogo não encontrado
-                error_message_element = soup.select_one(".search_results_error")
-                if error_message_element and "No results were found for your search" in error_message_element.text:
-                    return self._format_error("Jogo não encontrado.")
-                return self._format_error("Nenhum resultado de busca visível ou estrutura da página mudou.")
-
-            cleaned_game_name = _clean_game_title(game_name)
-
-            for result_element in search_results:
-                title_element = result_element.select_one("span.title")
-                if title_element:
-                    result_title = title_element.text.strip()
-                    cleaned_result_title = _clean_game_title(result_title)
-                    score = fuzz.ratio(cleaned_game_name, cleaned_result_title)
-                    
-                    if score > highest_score:
-                        highest_score = score
-                        best_match_element = result_element
-            
-            if not best_match_element or highest_score < SIMILARITY_THRESHOLD:
-                return self._format_error(f"Jogo não encontrado ou semelhança muito baixa ({highest_score}%).")
-
-            title = best_match_element.select_one("span.title").text.strip()
-            game_url = best_match_element['href']
-            final_price_str = "Preço indisponível"
-            
-            # Tenta encontrar o preço (pode ser mais complexo com Selenium, mas BeautifulSoup ainda é bom para o HTML final)
-            discount_price_element = best_match_element.select_one(".search_price.discounted, .discount_final_price")
-            if discount_price_element:
-                price_text = discount_price_element.text.strip().split("R$")[-1].strip()
-                final_price_str = f"R$ {price_text}" if price_text else "Preço indisponível"
-            else:
-                regular_price_element = best_match_element.select_one(".search_price")
-                if regular_price_element:
-                    price_text = regular_price_element.text.strip().split("R$")[-1].strip()
-                    final_price_str = f"R$ {price_text}" if price_text else "Preço indisponível"
-            
-            return {
-                "found": True,
-                "title": title,
-                "price_str": final_price_str,
-                "price_float": clean_price_to_float(final_price_str),
-                "url": game_url,
-                "similarity_score": highest_score
-            }
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        except TimeoutException:
-            print(f"ERRO STEAM: Tempo limite excedido ao carregar a página de busca para '{game_name}'.")
-            return self._format_error("Tempo limite excedido na busca.")
-        except Exception as e:
-            print(f"ERRO INESPERADO STEAM com Selenium para '{game_name}': {e}"); traceback.print_exc()
-            return self._format_error("Erro inesperado com Selenium.")
+        # Pega os primeiros 5 resultados de busca
+        search_results = soup.select("#search_resultsRows a")[:5] # Limita a 5 resultados
 
+        best_match_element = None
+        highest_score = 0
+        
+        if not search_results:
+            return self._format_error("Não encontrado.") # Mensagem de erro padrão
+
+        cleaned_game_name = _clean_game_title(game_name)
+
+        # Itera sobre os resultados para encontrar a melhor correspondência
+        for result_element in search_results:
+            title_element = result_element.select_one("span.title")
+            if title_element:
+                result_title = title_element.text.strip()
+                cleaned_result_title = _clean_game_title(result_title)
+                # Calcula a pontuação de semelhança entre o nome buscado e o título do resultado limpos
+                score = fuzz.ratio(cleaned_game_name, cleaned_result_title)
+                
+                if score > highest_score:
+                    highest_score = score
+                    best_match_element = result_element
+        
+        # Se não encontrou uma boa correspondência acima do limiar
+        if not best_match_element or highest_score < SIMILARITY_THRESHOLD:
+            return self._format_error(f"Não encontrado (semelhança: {highest_score}%).") # Mensagem de erro padrão
+
+        # Processa as informações do melhor resultado
+        title = best_match_element.select_one("span.title").text.strip()
+        game_url = best_match_element['href']
+
+        final_price_str = "Não encontrado" # Mensagem de erro padrão
+        # Tenta encontrar o preço com desconto primeiro, depois o preço normal
+        discount_price_element = best_match_element.select_one(".search_price.discounted, .discount_final_price")
+        if discount_price_element:
+            price_text = discount_price_element.text.strip().split("R$")[-1].strip()
+            final_price_str = f"R$ {price_text}" if price_text else "Não encontrado"
+        else:
+            regular_price_element = best_match_element.select_one(".search_price")
+            if regular_price_element:
+                price_text = regular_price_element.text.strip().split("R$")[-1].strip()
+                final_price_str = f"R$ {price_text}" if price_text else "Não encontrado"
+            
+        return {
+            "found": True,
+            "title": title,
+            "price_str": final_price_str,
+            "price_float": clean_price_to_float(final_price_str),
+            "url": game_url,
+            "similarity_score": highest_score
+        }
 
     def _format_error(self, message: str) -> dict:
         """
         Formata um dicionário de erro para resultados da Steam.
+        A mensagem padrão será "Não encontrado".
         """
         return {
             "found": False,
             "title": None,
-            "price_str": message,
+            "price_str": "Não encontrado", # Sempre retorna "Não encontrado"
             "price_float": float('inf'), # Sinaliza um preço muito alto para não ser o menor histórico
             "url": None,
             "similarity_score": 0 # Semelhança 0 em caso de erro/não encontrado
@@ -276,7 +210,7 @@ class PsnScraper:
             response.raise_for_status()
         except requests.RequestException as e:
             print(f"ERRO PSN: Falha de comunicação para '{game_name}': {e}")
-            return self._format_error("Falha de comunicação.")
+            return self._format_error("Não encontrado.") # Mensagem de erro padrão
 
         soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -322,11 +256,11 @@ class PsnScraper:
 
         # Se não encontrou uma boa correspondência acima do limiar
         if not best_match_tile or highest_score < SIMILARITY_THRESHOLD:
-            return self._format_error(f"Jogo não encontrado ou semelhança muito baixa ({highest_score}%).")
+            return self._format_error(f"Não encontrado (semelhança: {highest_score}%).") # Mensagem de erro padrão
 
 
         title = 'Nome não encontrado'
-        price_str = 'Preço indisponível'
+        price_str = 'Não encontrado' # Mensagem de erro padrão
         
         # Extrai o título do melhor tile
         if best_match_tile == soup:
@@ -366,11 +300,12 @@ class PsnScraper:
     def _format_error(self, message: str) -> dict:
         """
         Formata um dicionário de erro para resultados da PSN.
+        A mensagem padrão será "Não encontrado".
         """
         return {
             "found": False,
             "title": None,
-            "price_str": message,
+            "price_str": "Não encontrado", # Sempre retorna "Não encontrado"
             "price_float": float('inf'),
             "url": None,
             "similarity_score": 0 # Semelhança 0 em caso de erro/não encontrado
@@ -379,27 +314,24 @@ class PsnScraper:
 
 # --- Lógica Principal do Script ---
 
-# Cache global para planilhas e dados (MOVIDO PARA CIMA PARA GARANTIR DEFINIÇÃO GLOBAL)
+# Cache global para planilhas e dados
 _sheet_cache = {}
 _data_cache = {}
 _cache_ttl_seconds = 300 # Tempo de vida do cache em segundos (5 minutos)
 _last_cache_update = {}
 
 # Configuração da URL da planilha (usando a mesma variável de ambiente do seu API)
-# Esta classe de Config simula a leitura das variáveis de ambiente para o script
-# Assim, o script pode usar os mesmos nomes de variáveis que sua API.
 class PriceTrackerConfig:
-    GOOGLE_SHEETS_CREDENTIALS_JSON = os.environ.get('GSPREAD_SERVICE_ACCOUNT_CREDENTIALS') # Use o nome do secret do Price Tracker
+    GOOGLE_SHEETS_CREDENTIALS_JSON = os.environ.get('GSPREAD_SERVICE_ACCOUNT_CREDENTIALS')
     if not GOOGLE_SHEETS_CREDENTIALS_JSON:
         print("CRITICAL ERROR: 'GSPREAD_SERVICE_ACCOUNT_CREDENTIALS' environment variable is not set!")
 
-    # Usaremos GOOGLE_SHEET_URL para o método de acesso antigo
-    GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL') # Novo secret para o Price Tracker
+    GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL')
     if not GOOGLE_SHEET_URL:
         print("CRITICAL ERROR: 'GOOGLE_SHEET_URL' environment variable is not set!")
 
 
-# --- NOVO: Função auxiliar para converter número de coluna para letra ---
+# --- Função auxiliar para converter número de coluna para letra ---
 def _col_to_char(col_num: int) -> str:
     """
     Converte um número de coluna (1-based) para sua representação em letra (A, B, ..., Z, AA, AB, ...).
@@ -410,7 +342,6 @@ def _col_to_char(col_num: int) -> str:
         col_num, remainder = divmod(col_num - 1, 26)
         string = chr(65 + remainder) + string
     return string
-# --- FIM NOVO ---
 
 
 def _get_sheet_for_price_tracker(sheet_name):
@@ -419,7 +350,7 @@ def _get_sheet_for_price_tracker(sheet_name):
     Autentica com as credenciais da conta de serviço lidas de uma variável de ambiente,
     e abre a planilha pela URL, conforme o sistema da sua API.
     """
-    global _sheet_cache # Declarar como global
+    global _sheet_cache
     if sheet_name in _sheet_cache:
         return _sheet_cache[sheet_name]
     
@@ -434,22 +365,17 @@ def _get_sheet_for_price_tracker(sheet_name):
             print("CRITICAL ERROR (PriceTracker): GOOGLE_SHEET_URL environment variable is not set in Config.")
             return None
 
-        # --- DEBUG: Imprime a URL que está sendo usada ---
         print(f"DEBUG (PriceTracker): Google Sheet URL being used: {google_sheet_url}")
-        # --- FIM DEBUG ---
 
-        # Carregar as credenciais do JSON
         creds_dict = json.loads(credentials_json)
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         
-        # Autorizar o cliente gspread com as credenciais
         gc = gspread.authorize(creds)
         
         print("DEBUG (PriceTracker): Type of 'gc' object after authorize: ", type(gc))
         print(f"DEBUG (PriceTracker): gspread version: {gspread.__version__}")
 
-        # Usar open_by_url para acessar a planilha
         spreadsheet = gc.open_by_url(google_sheet_url)
         worksheet = spreadsheet.worksheet(sheet_name)
         _sheet_cache[sheet_name] = worksheet
@@ -462,7 +388,7 @@ def _get_sheet_for_price_tracker(sheet_name):
 
 def _get_data_from_sheet_for_price_tracker(sheet_name):
     """Retorna os dados da planilha para o Price Tracker, usando cache com TTL."""
-    global _data_cache, _last_cache_update # Declarar como global
+    global _data_cache, _last_cache_update
     current_time = datetime.now()
     if sheet_name in _data_cache and \
        (current_time - _last_cache_update.get(sheet_name, datetime.min)).total_seconds() < _cache_ttl_seconds:
@@ -491,7 +417,7 @@ def _get_data_from_sheet_for_price_tracker(sheet_name):
 
 def _invalidate_cache(sheet_name):
     """Invalida o cache para uma planilha específica."""
-    global _data_cache # Declarar como global
+    global _data_cache
     if sheet_name in _data_cache:
         del _data_cache[sheet_name]
         print(f"Cache para a planilha '{sheet_name}' invalidado.")
@@ -534,10 +460,9 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
         # Garante que as colunas existam no DataFrame para manipulação
         for col in target_gsheet_columns:
             if col not in df.columns:
-                df[col] = 'Preço indisponível' # Valor padrão para novas colunas
+                df[col] = 'Não encontrado' # Valor padrão para novas colunas
 
         # Pega os cabeçalhos da planilha para encontrar os índices das colunas target
-        # Usamos _get_sheet_for_price_tracker aqui para garantir que estamos usando o método de acesso correto
         gsheet_worksheet = _get_sheet_for_price_tracker(worksheet_name)
         if not gsheet_worksheet:
             print(f"ERRO: Não foi possível obter o objeto da planilha para {worksheet_name}.")
