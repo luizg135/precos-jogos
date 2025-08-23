@@ -4,4 +4,5 @@ pandas
 openpyxl
 fuzzywuzzy
 python-levenshtein
-gspread>=5.0.0 # Garante uma versão moderna do gspread
+gspread
+oauth2client
