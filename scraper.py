@@ -44,7 +44,7 @@ def clean_price_to_float(price_str: str) -> float:
         # Tenta extrair apenas a parte numérica e arredonda para o inteiro mais próximo (para cima)
         match = re.search(r'\d[\d\.]*', cleaned_price)
         if match:
-            return math.ceil(float(match.group(0))) # <--- MODIFICAÇÃO AQUI: math.ceil para arredondar para cima
+            return math.ceil(float(match.group(0))) # math.ceil para arredondar para cima
         return float('inf')
     except ValueError:
         return float('inf') # Retorna infinito se a conversão falhar
@@ -53,13 +53,14 @@ def format_float_to_price_str(price_float: float) -> str:
     """
     Converte um float de preço (já arredondado para cima) de volta para uma string formatada (ex: "400").
     Retorna "Não encontrado" se o preço for float('inf').
+    Retorna "0" para jogos gratuitos.
     """
     if price_float == 0.0:
         return "0" # Mostra "0" para jogos gratuitos
     if price_float == float('inf'):
         return "Não encontrado" # Consistente com a mensagem de erro
-    # Formata como um número inteiro, sem o "R$" e sem a aspa simples
-    return str(int(price_float)) # <--- MODIFICAÇÃO AQUI: Apenas o número inteiro como string, sem aspa inicial
+    # Formata como um número inteiro, sem o "R$" e sem aspas.
+    return str(int(price_float)) # Apenas o número inteiro como string, sem aspa inicial
 
 def _clean_game_title(title: str) -> str:
     """
@@ -312,7 +313,7 @@ class PsnScraper:
             "found": True,
             "title": title,
             "price_str": price_str,
-            "price_float": clean_price_to_float(final_price_str), # Corrigido para usar final_price_str
+            "price_float": clean_price_to_float(price_str), # Corrigido para usar price_str
             "url": game_url,
             "similarity_score": highest_score
         }
