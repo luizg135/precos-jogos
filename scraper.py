@@ -50,15 +50,15 @@ def clean_price_to_float(price_str: str) -> float:
 
 def format_float_to_price_str(price_float: float) -> str:
     """
-    Converte um float de preço (já arredondado) de volta para uma string formatada (ex: "R$ 400").
+    Converte um float de preço (já arredondado) de volta para uma string formatada (ex: "400").
     Retorna "Não encontrado" se o preço for float('inf').
     """
     if price_float == 0.0:
-        return "R$ 0" # Alterado para mostrar "R$ 0" para jogos gratuitos
+        return "0" # Alterado para mostrar "0" para jogos gratuitos
     if price_float == float('inf'):
         return "Não encontrado" # Consistente com a mensagem de erro
-    # Formata para Real Brasileiro, como um número inteiro
-    return f"R$ {int(price_float):,}".replace(",", "X").replace(".", ",").replace("X", ".")
+    # Formata como um número inteiro, sem o "R$"
+    return f"{int(price_float):,}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def _clean_game_title(title: str) -> str:
     """
