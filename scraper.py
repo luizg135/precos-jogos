@@ -9,6 +9,7 @@ import gspread # Importa gspread para interagir com Google Sheets
 import os # Para acessar variáveis de ambiente (secrets do GitHub Actions)
 import json # Para ler as credenciais JSON do service account
 from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
+import traceback # <--- ADICIONADO: Importa o módulo traceback para depuração de erros
 
 # Você pode instalar python-levenshtein para melhor desempenho: pip install fuzzywuzzy python-levenshtein
 
