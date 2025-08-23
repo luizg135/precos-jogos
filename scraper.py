@@ -54,7 +54,7 @@ def format_float_to_price_str(price_float: float) -> str:
     Retorna "Não encontrado" se o preço for float('inf').
     """
     if price_float == 0.0:
-        return "Gratuito"
+        return "R$ 0" # Alterado para mostrar "R$ 0" para jogos gratuitos
     if price_float == float('inf'):
         return "Não encontrado" # Consistente com a mensagem de erro
     # Formata para Real Brasileiro, como um número inteiro
@@ -99,9 +99,8 @@ class SteamScraper:
         e considerando os primeiros 5 resultados.
         """
         print(f"STEAM: Buscando por '{game_name}'...")
-        # --- MODIFICAÇÃO AQUI: Removido o parâmetro 'l' (idioma) para uma busca mais abrangente ---
+        # Removido o parâmetro 'l' (idioma) para uma busca mais abrangente
         params = {'term': game_name, 'cc': 'br'} # Mantém 'cc': 'br' para preço em BRL
-        # --- FIM DA MODIFICAÇÃO ---
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         # Cookies para contornar a verificação de idade (ainda mantidos, mas podem não ser 100% eficazes sem JS)
         cookies = {
