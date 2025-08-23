@@ -9,7 +9,7 @@ import gspread # Importa gspread para interagir com Google Sheets
 import os # Para acessar variáveis de ambiente (secrets do GitHub Actions)
 import json # Para ler as credenciais JSON do service account
 from oauth2client.service_account import ServiceAccountCredentials # Novo import para a autenticação antiga
-import traceback # <--- ADICIONADO: Importa o módulo traceback para depuração de erros
+import traceback # Importa o módulo traceback para depuração de erros
 
 # Você pode instalar python-levenshtein para melhor desempenho: pip install fuzzywuzzy python-levenshtein
 
@@ -378,6 +378,20 @@ class PriceTrackerConfig:
         print("CRITICAL ERROR: 'GOOGLE_SHEET_URL' environment variable is not set!")
 
 
+# --- NOVO: Função auxiliar para converter número de coluna para letra ---
+def _col_to_char(col_num: int) -> str:
+    """
+    Converte um número de coluna (1-based) para sua representação em letra (A, B, ..., Z, AA, AB, ...).
+    Esta função substitui gspread.utils.col_to_char, que foi removida em versões recentes do gspread.
+    """
+    string = ""
+    while col_num > 0:
+        col_num, remainder = divmod(col_num - 1, 26)
+        string = chr(65 + remainder) + string
+    return string
+# --- FIM NOVO ---
+
+
 def _get_sheet_for_price_tracker(sheet_name):
     """
     Retorna o objeto da planilha (worksheet) para o Price Tracker, usando cache.
@@ -398,6 +412,10 @@ def _get_sheet_for_price_tracker(sheet_name):
         if not google_sheet_url:
             print("CRITICAL ERROR (PriceTracker): GOOGLE_SHEET_URL environment variable is not set in Config.")
             return None
+
+        # --- DEBUG: Imprime a URL que está sendo usada ---
+        print(f"DEBUG (PriceTracker): Google Sheet URL being used: {google_sheet_url}")
+        # --- FIM DEBUG ---
 
         # Carregar as credenciais do JSON
         creds_dict = json.loads(credentials_json)
@@ -575,8 +593,9 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
             updates.append(row_data)
 
         # Determina o range completo para a atualização
-        start_col_letter = gspread.utils.col_to_char(col_indices[target_gsheet_columns[0]])
-        end_col_letter = gspread.utils.col_to_char(col_indices[target_gsheet_columns[-1]])
+        # Agora usando a nova função _col_to_char
+        start_col_letter = _col_to_char(col_indices[target_gsheet_columns[0]])
+        end_col_letter = _col_to_char(col_indices[target_gsheet_columns[-1]])
         end_row = start_row + len(df) - 1
 
         range_to_update = f"{start_col_letter}{start_row}:{end_col_letter}{end_row}"
