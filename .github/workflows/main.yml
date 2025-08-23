@@ -1,0 +1,28 @@
+name: Atualizar Preços de Jogos
+
+on:
+  workflow_dispatch: # Permite disparar o workflow manualmente
+  schedule:
+    - cron: '0 0 * * *' # Roda o script uma vez por dia à meia-noite (UTC)
+
+jobs:
+  update-prices:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout do Código
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9' # Ou a versão que você preferir
+
+    - name: Instalar Dependências
+      run: |
+        pip install requests beautifulsoup4 pandas openpyxl fuzzywuzzy python-levenshtein gspread
+
+    - name: Executar Scraper
+      env:
+        GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+        GSPREAD_SERVICE_ACCOUNT_CREDENTIALS: ${{ secrets.GSPREAD_SERVICE_ACCOUNT_CREDENTIALS }}
+      run: python scraper.py # Substitua "seu_script_de_preco.py" pelo nome do seu arquivo Python
