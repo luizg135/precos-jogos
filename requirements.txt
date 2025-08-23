@@ -6,4 +6,3 @@ fuzzywuzzy
 python-levenshtein
 gspread
 oauth2client
-selenium # Adicionado para o controle do navegador
