@@ -115,6 +115,7 @@ class SteamScraper:
         # O ChromeDriver será encontrado no PATH do sistema no GitHub Actions
         # ou você pode especificar o caminho se estiver rodando localmente
         try:
+            # Não precisamos especificar o caminho do chromedriver se ele estiver no PATH (configurado pelo workflow)
             self.driver = webdriver.Chrome(service=Service(), options=chrome_options)
             print("DEBUG: Selenium WebDriver inicializado com sucesso.")
         except WebDriverException as e:
@@ -621,7 +622,8 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
         range_to_update = f"{start_col_letter}{start_row}:{end_col_letter}{end_row}"
         
         print(f"\nAtualizando Google Sheet no range: {range_to_update}")
-        gsheet_worksheet.update(range_to_update, updates)
+        # Correção para a DeprecationWarning: usar argumentos nomeados
+        gsheet_worksheet.update(values=updates, range_name=range_to_update)
 
 
         print(f"\nPlanilha do Google Sheets '{worksheet_name}' atualizada com sucesso!")
