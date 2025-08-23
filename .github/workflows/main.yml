@@ -3,7 +3,7 @@ name: Atualizar Preços de Jogos
 on:
   workflow_dispatch: # Permite disparar o workflow manualmente
   schedule:
-    - cron: '0 0 * * *' # Roda o script uma vez por dia à meia-noite (UTC)
+    - cron: '*/5 * * * *' # Roda o script uma vez por dia à meia-noite (UTC)
 
 jobs:
   update-prices:
