@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time # Para adicionar um pequeno atraso entre as requisições
 from fuzzywuzzy import fuzz # Importa fuzzywuzzy
 import re # Para expressões regulares na limpeza de títulos
@@ -539,8 +539,23 @@ def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
                 wishlist_gsheet.update_cell(1, len(gsheet_headers), col_name)
             col_indices[col_name] = gsheet_headers.index(col_name) + 1 # gspread é 1-based
 
-        # Itera sobre cada jogo na planilha
-        history_updates = []
+        # --- Lógica para o histórico de preços (evitar duplicatas diárias) ---
+        # Lê o histórico existente para verificar e sobrescrever
+        existing_history_records = history_sheet.get_all_records()
+        history_df = pd.DataFrame(existing_history_records)
+        
+        # Cria um índice para busca rápida: (Nome do Jogo, Plataforma, Data) -> linha na planilha
+        history_lookup = {}
+        if not history_df.empty:
+            for i, row in history_df.iterrows():
+                # Garante que a data seja apenas a parte da data para a chave de lookup
+                date_key = row['Data']
+                history_lookup[(row['Nome do Jogo'], row['Plataforma'], date_key)] = i + 2 # +2 para o índice da linha no Sheets
+
+        updates_to_history = [] # Para atualizações de linhas existentes
+        appends_to_history = [] # Para novas linhas
+
+        # Itera sobre cada jogo na planilha de desejos
         for index, row in df.iterrows():
             game_name = row['Nome']
             if pd.isna(game_name) or str(game_name).strip() == '':
@@ -566,9 +581,15 @@ def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
             else:
                  print(f"  STEAM: Preço atual para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
             
-            # Adiciona ao histórico de preços (apenas se encontrado e não for infinito)
+            # Adiciona/Atualiza o histórico de preços para Steam
             if steam_result['found'] and steam_result['price_float'] != float('inf'):
-                history_updates.append([game_name, 'Steam', current_date_short, format_float_to_price_str(steam_result['price_float'])])
+                history_key = (game_name, 'Steam', current_date_short)
+                history_row_data = [game_name, 'Steam', current_date_short, format_float_to_price_str(steam_result['price_float'])]
+                if history_key in history_lookup:
+                    row_idx = history_lookup[history_key]
+                    updates_to_history.append({'range': f"A{row_idx}:{_col_to_char(len(history_sheet.row_values(1)))}{row_idx}", 'values': [history_row_data]})
+                else:
+                    appends_to_history.append(history_row_data)
 
 
             # --- Busca na PSN ---
@@ -588,9 +609,15 @@ def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
             else:
                  print(f"  PSN: Preço atual para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
             
-            # Adiciona ao histórico de preços (apenas se encontrado e não for infinito)
+            # Adiciona/Atualiza o histórico de preços para PSN
             if psn_result['found'] and psn_result['price_float'] != float('inf'):
-                history_updates.append([game_name, 'PSN', current_date_short, format_float_to_price_str(psn_result['price_float'])])
+                history_key = (game_name, 'PSN', current_date_short)
+                history_row_data = [game_name, 'PSN', current_date_short, format_float_to_price_str(psn_result['price_float'])]
+                if history_key in history_lookup:
+                    row_idx = history_lookup[history_key]
+                    updates_to_history.append({'range': f"A{row_idx}:{_col_to_char(len(history_sheet.row_values(1)))}{row_idx}", 'values': [history_row_data]})
+                else:
+                    appends_to_history.append(history_row_data)
             
             df.at[index, 'Ultima Atualizacao'] = current_date_full
 
@@ -624,14 +651,20 @@ def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
         print("\nVisão geral dos dados processados (Desejos):")
         print(df[['Nome'] + target_gsheet_columns])
 
-        # --- Adiciona os dados ao Historico de Preços ---
-        if history_updates:
-            print(f"\nAdicionando {len(history_updates)} registros à aba 'Historico de Preços'.")
-            history_sheet.append_rows(history_updates)
+        # --- Executa as atualizações e adições no Historico de Preços ---
+        if updates_to_history:
+            print(f"\nAtualizando {len(updates_to_history)} registros existentes na aba 'Historico de Preços'.")
+            history_sheet.batch_update(updates_to_history)
+        
+        if appends_to_history:
+            print(f"\nAdicionando {len(appends_to_history)} novos registros à aba 'Historico de Preços'.")
+            history_sheet.append_rows(appends_to_history)
+            
+        if updates_to_history or appends_to_history:
             _invalidate_cache("Historico de Preços") # Invalida o cache da aba de histórico
             print("Histórico de Preços atualizado com sucesso!")
         else:
-            print("Nenhum preço novo para adicionar ao histórico.")
+            print("Nenhum preço novo para adicionar ou atualizar ao histórico.")
 
     except Exception as e:
         print(f"Ocorreu um erro inesperado durante a execução do script: {e}")
