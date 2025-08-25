@@ -444,34 +444,71 @@ def _invalidate_cache(sheet_name):
         del _data_cache[sheet_name]
         print(f"Cache para a planilha '{sheet_name}' invalidado.")
 
+def _get_or_create_history_sheet(spreadsheet_obj, sheet_name="Historico de Preços"):
+    """
+    Verifica se a aba 'Historico de Preços' existe. Se não existir, a cria com os cabeçalhos.
+    Retorna o objeto da worksheet.
+    """
+    try:
+        worksheet = spreadsheet_obj.worksheet(sheet_name)
+        print(f"DEBUG: Aba '{sheet_name}' já existe.")
+        return worksheet
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"DEBUG: Aba '{sheet_name}' não encontrada, criando...")
+        headers = ['Nome do Jogo', 'Plataforma', 'Data', 'Preço']
+        worksheet = spreadsheet_obj.add_worksheet(title=sheet_name, rows="1000", cols=str(len(headers)))
+        worksheet.append_row(headers)
+        print(f"DEBUG: Aba '{sheet_name}' criada com sucesso e cabeçalhos adicionados.")
+        return worksheet
+    except Exception as e:
+        print(f"ERRO: Não foi possível acessar ou criar a aba '{sheet_name}': {e}"); traceback.print_exc()
+        return None
 
-def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
+def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
     """
     Função principal que orquestra a leitura da planilha do Google Sheets, o scraping e a atualização.
     """
     steam_scraper = SteamScraper()
     psn_scraper = PsnScraper()
     brasilia_tz = pytz.timezone('America/Sao_Paulo')
-    current_date = datetime.now(brasilia_tz).strftime('%Y-%m-%d %H:%M:%S')
+    current_date_full = datetime.now(brasilia_tz).strftime('%Y-%m-%d %H:%M:%S')
+    current_date_short = datetime.now(brasilia_tz).strftime('%Y-%m-%d')
     
     try:
         # Define a variável de ambiente para a URL da planilha para a classe PriceTrackerConfig
         os.environ['GOOGLE_SHEET_URL'] = google_sheet_url
 
-        # Lê os dados da planilha
-        data = _get_data_from_sheet_for_price_tracker(worksheet_name)
+        # Autenticação e abertura da planilha para criar/acessar a aba de histórico
+        credentials_json = PriceTrackerConfig.GOOGLE_SHEETS_CREDENTIALS_JSON
+        if not credentials_json:
+            print("CRITICAL ERROR (PriceTracker): GOOGLE_SHEETS_CREDENTIALS environment variable is not set in Config.")
+            return
+        creds_dict = json.loads(credentials_json)
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.open_by_url(google_sheet_url)
+
+        # Garante que a aba 'Historico de Preços' exista
+        history_sheet = _get_or_create_history_sheet(spreadsheet, "Historico de Preços")
+        if not history_sheet:
+            print("ERRO: Não foi possível obter ou criar a aba 'Historico de Preços'.")
+            return
+
+        # Lê os dados da planilha de desejos
+        data = _get_data_from_sheet_for_price_tracker(wishlist_sheet_name)
         if not data:
-            print(f"ERRO: Não foi possível carregar dados da planilha '{worksheet_name}'. Verifique o ID/URL da planilha e permissões.")
+            print(f"ERRO: Não foi possível carregar dados da planilha '{wishlist_sheet_name}'. Verifique o ID/URL da planilha e permissões.")
             return
 
         df = pd.DataFrame(data)
 
         if 'Nome' not in df.columns:
-            print(f"Erro: A planilha '{worksheet_name}' não possui a coluna 'Nome'.")
+            print(f"Erro: A planilha '{wishlist_sheet_name}' não possui a coluna 'Nome'.")
             print("Certifique-se de que a primeira coluna com os nomes dos jogos esteja nomeada exatamente 'Nome'.")
             return
 
-        # Define as colunas que serão preenchidas no Google Sheets
+        # Define as colunas que serão preenchidas no Google Sheets (aba Desejos)
         target_gsheet_columns = [
             'Steam Preco Atual',
             'Steam Menor Preco Historico',
@@ -485,24 +522,25 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
             if col not in df.columns:
                 df[col] = 'Não encontrado' # Valor padrão para novas colunas
 
-        # Pega os cabeçalhos da planilha para encontrar os índices das colunas target
-        gsheet_worksheet = _get_sheet_for_price_tracker(worksheet_name)
-        if not gsheet_worksheet:
-            print(f"ERRO: Não foi possível obter o objeto da planilha para {worksheet_name}.")
+        # Pega os cabeçalhos da planilha Desejos para encontrar os índices das colunas target
+        wishlist_gsheet = _get_sheet_for_price_tracker(wishlist_sheet_name)
+        if not wishlist_gsheet:
+            print(f"ERRO: Não foi possível obter o objeto da planilha para {wishlist_sheet_name}.")
             return
 
-        gsheet_headers = gsheet_worksheet.row_values(1)
+        gsheet_headers = wishlist_gsheet.row_values(1)
         col_indices = {}
         # Garante que todas as colunas de destino existam na planilha, adicionando se necessário.
         for col_name in target_gsheet_columns:
             if col_name not in gsheet_headers:
-                print(f"Adicionando coluna '{col_name}' à planilha do Google Sheets.")
+                print(f"Adicionando coluna '{col_name}' à planilha do Google Sheets '{wishlist_sheet_name}'.")
                 gsheet_headers.append(col_name)
                 # Atualiza apenas a célula do cabeçalho
-                gsheet_worksheet.update_cell(1, len(gsheet_headers), col_name)
+                wishlist_gsheet.update_cell(1, len(gsheet_headers), col_name)
             col_indices[col_name] = gsheet_headers.index(col_name) + 1 # gspread é 1-based
 
         # Itera sobre cada jogo na planilha
+        history_updates = []
         for index, row in df.iterrows():
             game_name = row['Nome']
             if pd.isna(game_name) or str(game_name).strip() == '':
@@ -513,7 +551,6 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
 
             # --- Busca na Steam ---
             steam_result = steam_scraper.search_game_price(game_name)
-            # Atribui o preço formatado ao DataFrame
             df.at[index, 'Steam Preco Atual'] = format_float_to_price_str(steam_result['price_float'])
             
             current_steam_price_float = steam_result['price_float']
@@ -521,20 +558,21 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
             historical_steam_price_float = clean_price_to_float(historical_steam_price_str)
 
             if current_steam_price_float < historical_steam_price_float:
-                # Atribui o menor preço histórico formatado
                 df.at[index, 'Steam Menor Preco Historico'] = format_float_to_price_str(steam_result['price_float'])
                 print(f"  STEAM: Novo menor preço histórico para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
             elif historical_steam_price_float == float('inf') and steam_result['found']:
-                 # Atribui o primeiro preço formatado
                  df.at[index, 'Steam Menor Preco Historico'] = format_float_to_price_str(steam_result['price_float'])
                  print(f"  STEAM: Primeiro preço registrado para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
             else:
                  print(f"  STEAM: Preço atual para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
+            
+            # Adiciona ao histórico de preços (apenas se encontrado e não for infinito)
+            if steam_result['found'] and steam_result['price_float'] != float('inf'):
+                history_updates.append([game_name, 'Steam', current_date_short, format_float_to_price_str(steam_result['price_float'])])
 
 
             # --- Busca na PSN ---
             psn_result = psn_scraper.search_game_price(game_name)
-            # Atribui o preço formatado ao DataFrame
             df.at[index, 'PSN Preco Atual'] = format_float_to_price_str(psn_result['price_float'])
 
             current_psn_price_float = psn_result['price_float']
@@ -542,21 +580,23 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
             historical_psn_price_float = clean_price_to_float(historical_psn_price_str)
 
             if current_psn_price_float < historical_psn_price_float:
-                # Atribui o menor preço histórico formatado
                 df.at[index, 'PSN Menor Preco Historico'] = format_float_to_price_str(psn_result['price_float'])
                 print(f"  PSN: Novo menor preço histórico para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
             elif historical_psn_price_float == float('inf') and psn_result['found']:
-                 # Atribui o primeiro preço formatado
                  df.at[index, 'PSN Menor Preco Historico'] = format_float_to_price_str(psn_result['price_float'])
                  print(f"  PSN: Primeiro preço registrado para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
             else:
                  print(f"  PSN: Preço atual para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
             
-            df.at[index, 'Ultima Atualizacao'] = current_date
+            # Adiciona ao histórico de preços (apenas se encontrado e não for infinito)
+            if psn_result['found'] and psn_result['price_float'] != float('inf'):
+                history_updates.append([game_name, 'PSN', current_date_short, format_float_to_price_str(psn_result['price_float'])])
+            
+            df.at[index, 'Ultima Atualizacao'] = current_date_full
 
             time.sleep(1) # Pequeno atraso para evitar sobrecarregar os servidores
 
-        # --- Atualiza o Google Sheet ---
+        # --- Atualiza a planilha de Desejos do Google Sheet ---
         # Prepara os dados para atualização (apenas as colunas modificadas)
         start_row = 2 # Começa na linha 2 (abaixo do cabeçalho)
         
@@ -575,17 +615,27 @@ def run_scraper(google_sheet_url: str, worksheet_name: str = 'Desejos'):
 
         range_to_update = f"{start_col_letter}{start_row}:{end_col_letter}{end_row}"
         
-        print(f"\nAtualizando Google Sheet no range: {range_to_update}")
+        print(f"\nAtualizando Google Sheet '{wishlist_sheet_name}' no range: {range_to_update}")
         # Correção para a DeprecationWarning: usar argumentos nomeados
-        gsheet_worksheet.update(values=updates, range_name=range_to_update)
+        wishlist_gsheet.update(values=updates, range_name=range_to_update)
+        _invalidate_cache(wishlist_sheet_name) # Invalida o cache da aba de desejos
 
-
-        print(f"\nPlanilha do Google Sheets '{worksheet_name}' atualizada com sucesso!")
-        print("\nVisão geral dos dados processados:")
+        print(f"\nPlanilha do Google Sheets '{wishlist_sheet_name}' atualizada com sucesso!")
+        print("\nVisão geral dos dados processados (Desejos):")
         print(df[['Nome'] + target_gsheet_columns])
+
+        # --- Adiciona os dados ao Historico de Preços ---
+        if history_updates:
+            print(f"\nAdicionando {len(history_updates)} registros à aba 'Historico de Preços'.")
+            history_sheet.append_rows(history_updates)
+            _invalidate_cache("Historico de Preços") # Invalida o cache da aba de histórico
+            print("Histórico de Preços atualizado com sucesso!")
+        else:
+            print("Nenhum preço novo para adicionar ao histórico.")
 
     except Exception as e:
         print(f"Ocorreu um erro inesperado durante a execução do script: {e}")
+        traceback.print_exc()
 
 # --- Executa o Scraper ---
 if __name__ == "__main__":
@@ -598,4 +648,4 @@ if __name__ == "__main__":
         print("Por favor, defina GOOGLE_SHEET_URL nas secrets do GitHub Actions.")
         exit(1)
 
-    run_scraper(google_sheet_url=GOOGLE_SHEET_URL, worksheet_name='Desejos')
+    run_scraper(google_sheet_url=GOOGLE_SHEET_URL, wishlist_sheet_name='Desejos')
