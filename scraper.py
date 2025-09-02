@@ -564,22 +564,19 @@ def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
 
             print(f"\nProcessando jogo: {game_name}")
 
-            # --- Busca na Steam ---
+# --- Busca na Steam ---
             steam_result = steam_scraper.search_game_price(game_name)
             df.at[index, 'Steam Preco Atual'] = format_float_to_price_str(steam_result['price_float'])
             
+            # Lógica corrigida e simplificada para o menor preço histórico
             current_steam_price_float = steam_result['price_float']
-            historical_steam_price_str = df.at[index, 'Steam Menor Preco Historico']
-            historical_steam_price_float = clean_price_to_float(historical_steam_price_str)
-
-            if current_steam_price_float < historical_steam_price_float:
-                df.at[index, 'Steam Menor Preco Historico'] = format_float_to_price_str(steam_result['price_float'])
-                print(f"  STEAM: Novo menor preço histórico para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
-            elif historical_steam_price_float == float('inf') and steam_result['found']:
-                 df.at[index, 'Steam Menor Preco Historico'] = format_float_to_price_str(steam_result['price_float'])
-                 print(f"  STEAM: Primeiro preço registrado para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
-            else:
-                 print(f"  STEAM: Preço atual para '{game_name}': {format_float_to_price_str(steam_result['price_float'])} (Semelhança: {steam_result['similarity_score']}%)")
+            historical_steam_price_float = clean_price_to_float(df.at[index, 'Steam Menor Preco Historico'])
+            
+            # O novo menor preço é o menor valor entre o histórico e o atual
+            new_historical_steam_price = min(current_steam_price_float, historical_steam_price_float)
+            
+            df.at[index, 'Steam Menor Preco Historico'] = format_float_to_price_str(new_historical_steam_price)
+            print(f"  STEAM: Preço atual para '{game_name}': {format_float_to_price_str(current_steam_price_float)} | Menor Histórico: {format_float_to_price_str(new_historical_steam_price)} (Semelhança: {steam_result['similarity_score']}%)")
             
             # Adiciona/Atualiza o histórico de preços para Steam
             if steam_result['found'] and steam_result['price_float'] != float('inf'):
@@ -592,22 +589,19 @@ def run_scraper(google_sheet_url: str, wishlist_sheet_name: str = 'Desejos'):
                     appends_to_history.append(history_row_data)
 
 
-            # --- Busca na PSN ---
+# --- Busca na PSN ---
             psn_result = psn_scraper.search_game_price(game_name)
             df.at[index, 'PSN Preco Atual'] = format_float_to_price_str(psn_result['price_float'])
 
+            # Lógica corrigida e simplificada para o menor preço histórico
             current_psn_price_float = psn_result['price_float']
-            historical_psn_price_str = df.at[index, 'PSN Menor Preco Historico']
-            historical_psn_price_float = clean_price_to_float(historical_psn_price_str)
+            historical_psn_price_float = clean_price_to_float(df.at[index, 'PSN Menor Preco Historico'])
 
-            if current_psn_price_float < historical_psn_price_float:
-                df.at[index, 'PSN Menor Preco Historico'] = format_float_to_price_str(psn_result['price_float'])
-                print(f"  PSN: Novo menor preço histórico para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
-            elif historical_psn_price_float == float('inf') and psn_result['found']:
-                 df.at[index, 'PSN Menor Preco Historico'] = format_float_to_price_str(psn_result['price_float'])
-                 print(f"  PSN: Primeiro preço registrado para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
-            else:
-                 print(f"  PSN: Preço atual para '{game_name}': {format_float_to_price_str(psn_result['price_float'])} (Semelhança: {psn_result['similarity_score']}%)")
+            # O novo menor preço é o menor valor entre o histórico e o atual
+            new_historical_psn_price = min(current_psn_price_float, historical_psn_price_float)
+
+            df.at[index, 'PSN Menor Preco Historico'] = format_float_to_price_str(new_historical_psn_price)
+            print(f"  PSN: Preço atual para '{game_name}': {format_float_to_price_str(current_psn_price_float)} | Menor Histórico: {format_float_to_price_str(new_historical_psn_price)} (Semelhança: {psn_result['similarity_score']}%)")
             
             # Adiciona/Atualiza o histórico de preços para PSN
             if psn_result['found'] and psn_result['price_float'] != float('inf'):
